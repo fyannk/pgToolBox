@@ -230,7 +230,7 @@ Before the tag: `make release-check TAG=vX.Y.Z` (semver, both charts' version, t
 CHANGELOG section, which must be dated: a heading that still says `Unreleased` is
 refused for a final tag; `REQUIRE_TAG=1` once the tag exists) and `make release-dry-run`
 (every image built for both architectures into OCI archives, the charts and
-manifests pinned and packaged, nothing pushed). The tag is created and pushed by a
+manifests pinned and packaged, nothing pushed; it needs GNU tar, which macOS does not ship). The tag is created and pushed by a
 person:
 
 ```bash

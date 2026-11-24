@@ -651,6 +651,10 @@ func (s *Service) Instances(ctx context.Context, namespace, name string) (viewmo
 	return list, nil
 }
 
+// podsNotRead is what an instance without a Pod says when the Pods were
+// not listed: no Pod is seen because none was read.
+const podsNotRead = "Pods could not be read"
+
 // instanceRows lists one row per member pod, primary first, then one per
 // instance the operator reports without a pod (status.instanceNames).
 func (s *Service) instanceRows(g *gathered, withSeries bool) []viewmodel.InstanceRow {
@@ -697,15 +701,25 @@ func (s *Service) instanceRows(g *gathered, withSeries bool) []viewmodel.Instanc
 		row.Health = instanceHealth(row)
 		rows = append(rows, row)
 	}
+	pods := s.provenance(g.key.Namespace, cache.SourcePods, viewmodel.OriginKubernetes, "Pod", now)
 	for _, name := range g.cluster.Status.InstanceNames {
 		if seen[name] {
 			continue
 		}
-		rows = append(rows, viewmodel.InstanceRow{
+		row := viewmodel.InstanceRow{
 			Name: name, Health: viewmodel.HealthCritical, Fenced: fenced(name),
 			Role:       viewmodel.Roles{Operator: role(g.cluster, name), Label: viewmodel.RoleUnknown, Live: viewmodel.RoleUnknown},
 			StatusRead: viewmodel.StatusRead{State: viewmodel.StatusReadNotRunning, Reason: "the operator reports this instance but no pod exists"},
-		})
+		}
+		switch {
+		case !g.listed(cache.SourcePods):
+			row.Health = viewmodel.HealthUnknown
+			row.StatusRead = viewmodel.StatusRead{State: viewmodel.StatusReadPending, Reason: podsNotRead}
+		case pods.Stale:
+			row.Health = viewmodel.HealthUnknown
+			row.StatusRead = viewmodel.StatusRead{State: viewmodel.StatusReadPending, Reason: joinNonEmpty("the Pod watch is stale", pods.StaleReason)}
+		}
+		rows = append(rows, row)
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
 		pi, pj := rows[i].Role.Operator == viewmodel.RolePrimary, rows[j].Role.Operator == viewmodel.RolePrimary

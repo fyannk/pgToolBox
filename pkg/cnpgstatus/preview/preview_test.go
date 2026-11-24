@@ -19,6 +19,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fyannk/pgToolBox/pkg/cnpgstatus"
 )
@@ -203,7 +204,7 @@ func TestCompute(t *testing.T) {
 		{
 			name:         "a new tablespace attaches a PVC and rolls the Pods",
 			before:       base,
-			after:        merge(base, map[string]any{"tablespaces": []map[string]any{{"name": "hist"}}}),
+			after:        merge(base, map[string]any{"tablespaces": []map[string]any{{"name": "hist", "storage": map[string]any{"size": "1Gi"}}}}),
 			minor:        cnpgstatus.Minor130,
 			effect:       EffectRollout,
 			primary:      PrimaryRecreate,
@@ -218,6 +219,14 @@ func TestCompute(t *testing.T) {
 			minor:        cnpgstatus.Minor130,
 			effect:       EffectNone,
 			primary:      PrimaryNone,
+			fieldReasons: []string{ReasonVolumeResize},
+			verified:     true,
+		},
+		{
+			name:   "a smaller volume is refused, and restarts nothing",
+			before: merge(base, map[string]any{"storage": map[string]any{"size": "10Gi"}}),
+			after:  merge(base, map[string]any{"storage": map[string]any{"size": "5Gi"}}),
+			minor:  cnpgstatus.Minor130, effect: EffectNone, primary: PrimaryNone,
 			fieldReasons: []string{ReasonVolumeResize},
 			verified:     true,
 		},
@@ -667,4 +676,102 @@ func TestComputeRejectsBadInput(t *testing.T) {
 	if _, err := Compute(Input{After: []byte("{")}); err == nil {
 		t.Fatal("a malformed definition must be refused")
 	}
+}
+
+// TestVolumeRefused: the volume changes CloudNativePG's webhook refuses
+// (validateStorageConfigurationSize, validateStorageConfigurationChange,
+// validateWalStorageChange, validateTablespacesChange), and the ones it
+// admits.
+func TestVolumeRefused(t *testing.T) {
+	template := func(size string) string {
+		return `{"pvcTemplate":{"resources":{"requests":{"storage":"` + size + `"}}}}`
+	}
+	ts := func(name, storage string) string { return `{"name":"` + name + `","storage":` + storage + `}` }
+	size := func(s string) string { return `{"size":"` + s + `"}` }
+	for _, tt := range []struct {
+		name, key, before, after string
+		want                     Effect
+	}{
+		{"grow", "storage", size("10Gi"), size("20Gi"), EffectNone},
+		{"shrink", "storage", size("10Gi"), size("9Gi"), EffectRefused},
+		{"same quantity, other unit", "storage", size("1Gi"), size("1024Mi"), EffectNone},
+		{"smaller number, larger quantity", "storage", size("900Mi"), size("1Gi"), EffectNone},
+		{"larger number, smaller quantity", "storage", size("1Gi"), size("1000Mi"), EffectRefused},
+		{"decimal below binary", "storage", size("10Gi"), size("10G"), EffectRefused},
+		{"size not parsable", "storage", size("10Gi"), size("lots"), EffectRefused},
+		{"old size not parsable", "storage", size("lots"), size("1Gi"), EffectNone},
+		{"size removed", "storage", size("10Gi"), `{"storageClass":"fast"}`, EffectRefused},
+		{"storage removed", "storage", size("10Gi"), `null`, EffectRefused},
+		{"size moved to the PVC template", "storage", size("10Gi"), template("10Gi"), EffectNone},
+		{"PVC template shrink", "storage", template("10Gi"), template("5Gi"), EffectRefused},
+		{"PVC template without a request", "storage", size("10Gi"), `{"pvcTemplate":{}}`, EffectRefused},
+		{"size wins over the template", "storage", size("10Gi"), `{"size":"20Gi","pvcTemplate":{"resources":{"requests":{"storage":"1Gi"}}}}`, EffectNone},
+		{"not a StorageConfiguration", "storage", size("10Gi"), `{"size":5}`, EffectNone},
+		{"storage class only", "storage", size("10Gi"), `{"size":"10Gi","storageClass":"fast"}`, EffectNone},
+		{"WAL volume added", "walStorage", `null`, size("5Gi"), EffectRollout},
+		{"WAL volume grow", "walStorage", size("5Gi"), size("6Gi"), EffectNone},
+		{"WAL volume shrink", "walStorage", size("5Gi"), size("4Gi"), EffectRefused},
+		{"WAL volume removed", "walStorage", size("5Gi"), `null`, EffectRefused},
+		{"tablespace grow, matched by name", "tablespaces", `[` + ts("a", size("9Gi")) + `,` + ts("b", size("1Gi")) + `]`, `[` + ts("b", size("2Gi")) + `,` + ts("a", size("9Gi")) + `]`, EffectNone},
+		{"tablespace shrink", "tablespaces", `[` + ts("a", size("9Gi")) + `]`, `[` + ts("a", size("8Gi")) + `]`, EffectRefused},
+		{"tablespace shrink beside a new one", "tablespaces", `[` + ts("a", size("9Gi")) + `]`, `[` + ts("a", size("8Gi")) + `,` + ts("b", size("1Gi")) + `]`, EffectRefused},
+		{"tablespace removed", "tablespaces", `[` + ts("a", size("9Gi")) + `,` + ts("b", size("1Gi")) + `]`, `[` + ts("a", size("9Gi")) + `]`, EffectRefused},
+		{"tablespaces removed", "tablespaces", `[` + ts("a", size("9Gi")) + `]`, `null`, EffectRefused},
+		{"WAL volume added without a size", "walStorage", `null`, `{"storageClass":"fast"}`, EffectRefused},
+		{"WAL volume added, size not parsable", "walStorage", `null`, size("lots"), EffectRefused},
+		{"tablespace added without a size", "tablespaces", `[]`, `[` + ts("a", `{}`) + `]`, EffectRefused},
+		{"tablespace added", "tablespaces", `[]`, `[` + ts("a", size("1Gi")) + `]`, EffectRollout},
+		{"size with an exabyte suffix", "storage", size("1E"), size("2Ei"), EffectNone},
+		{"numeric request", "storage", size("10Gi"), `{"pvcTemplate":{"resources":{"requests":{"storage":5}}}}`, EffectRefused},
+		{"huge exponent", "storage", size("10Gi"), size("1e100000000"), EffectUnknown},
+		{"huge old exponent", "storage", size("1e100000000"), size("10Gi"), EffectUnknown},
+		{"huge negative exponent", "storage", size("10Gi"), size("1E-100000000"), EffectUnknown},
+		{"long mantissa", "storage", size("10Gi"), size(strings.Repeat("9", 65)), EffectUnknown},
+		{"huge request", "storage", size("10Gi"), template("1e100000000"), EffectUnknown},
+		{"huge old request", "storage", template("1e100000000"), size("10Gi"), EffectUnknown},
+		{"huge numeric request", "storage", size("10Gi"), `{"pvcTemplate":{"resources":{"requests":{"storage":1e100000000}}}}`, EffectUnknown},
+		{"huge size of an added WAL volume", "walStorage", `null`, size("1e100000000"), EffectUnknown},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			spec := func(v string) []byte { return []byte(`{"spec":{"` + tt.key + `":` + v + `}}`) }
+			p, err := Compute(Input{Before: spec(tt.before), After: spec(tt.after), CNPGMinor: cnpgstatus.Minor130})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(p.Fields) != 1 || p.Fields[0].Effect != tt.want {
+				t.Errorf("fields %+v, want one %s", p.Fields, tt.want)
+			}
+		})
+	}
+}
+
+// FuzzStorageEffect: a volume is refused or not whatever its size says,
+// in bounded work, and an unchanged readable size is never refused.
+func FuzzStorageEffect(f *testing.F) {
+	for _, s := range []string{"10Gi", "1e100000000", "1E-100000000", "lots", "", "0", "-1Gi"} {
+		f.Add(s, "10Gi")
+		f.Add("10Gi", s)
+	}
+	f.Fuzz(func(t *testing.T, before, after string) {
+		spec := func(size string) json.RawMessage {
+			b, err := json.Marshal(map[string]string{"size": size})
+			if err != nil {
+				t.Skip()
+			}
+			return b
+		}
+		start := time.Now()
+		effect := storageEffect(spec(before), spec(after))
+		if d := time.Since(start); d > time.Second {
+			t.Errorf("%q to %q took %s", before, after, d)
+		}
+		switch effect {
+		case EffectNone, EffectRefused, EffectUnknown:
+		default:
+			t.Errorf("effect %q", effect)
+		}
+		if _, ok := (storage{Size: after}).size(); !ok && effect != EffectUnknown {
+			t.Errorf("%q to %q is %s, want unknown: the size was not compared", before, after, effect)
+		}
+	})
 }

@@ -138,7 +138,7 @@ func writeText(w io.Writer, rep report) {
 		fmt.Fprintf(&b, "\n%d document(s) that are not CloudNativePG Clusters were ignored.\n", rep.Ignored)
 	}
 	if rep.Disruptive {
-		b.WriteString("\nDisruptive: at least one Cluster restarts, rolls out, shuts down, is upgraded, loses instances or is removed, carries a refused parameter, or has an unknown effect.\n")
+		b.WriteString("\nDisruptive: at least one Cluster restarts, rolls out, shuts down, is upgraded, loses instances or is removed, carries a refused change, or has an unknown effect.\n")
 	} else {
 		b.WriteString("\nNot disruptive: at most a configuration reload or a start.\n")
 	}
@@ -174,7 +174,7 @@ func writePreview(b *strings.Builder, p preview.Preview, cnpgVersion string) {
 		fmt.Fprintf(b, "  %s — %s\n", word(effectWords, p.Effect), word(effectSummaries, p.Effect))
 	}
 	if n := refused(p); n > 0 {
-		fmt.Fprintf(b, "  Refused — the operator refuses %d parameter(s) below: the spec cannot carry this change.\n", n)
+		fmt.Fprintf(b, "  Refused — the operator refuses %d change(s) below: the spec cannot carry this change.\n", n)
 	}
 	strategy := "the operator updates the primary on its own"
 	if p.Strategy == "supervised" {

@@ -23,7 +23,7 @@ import (
 )
 
 // promoteReadiness is what a person weighs before confirming a
-// switchover to the replica r: its Pod, whether it streams, how far its
+// switchover to the replica r: its Pod, whether a WAL receiver runs, how far its
 // replay is behind, its synchronous state on the primary and fencing.
 // Each fact keeps its own source and age; a fact the console did not
 // read is unknown, never ok. It is not a score and refuses nothing: the
@@ -42,8 +42,15 @@ func (s *Service) promoteReadiness(g *gathered, r viewmodel.InstanceRow, now tim
 func (s *Service) readinessPod(g *gathered, r viewmodel.InstanceRow, now time.Time) viewmodel.ReadinessFact {
 	f := viewmodel.ReadinessFact{Key: viewmodel.ReadinessPod}
 	if r.Pod == nil {
-		f.Health, f.Text = viewmodel.HealthCritical, "no Pod: the operator reports the instance but no Pod exists"
 		f.Provenance = s.provenance(g.key.Namespace, cache.SourcePods, viewmodel.OriginKubernetes, "Pod", now)
+		switch {
+		case !g.listed(cache.SourcePods):
+			f.Health, f.Text = viewmodel.HealthUnknown, podsNotRead
+		case f.Provenance.Stale:
+			f.Health, f.Text = viewmodel.HealthUnknown, notReadNow(f.Provenance)
+		default:
+			f.Health, f.Text = viewmodel.HealthCritical, "no Pod: the operator reports the instance but no Pod exists"
+		}
 		return f
 	}
 	f.Provenance = r.Pod.Provenance
@@ -110,9 +117,11 @@ func readinessStreaming(g *gathered, r viewmodel.InstanceRow, stale bool) viewmo
 	case !r.Live.WALReceiverActive:
 		f.Health, f.Text = viewmodel.HealthWarning, "not streaming: no active WAL receiver"
 	case r.Live.ReplayPaused:
-		f.Health, f.Text = viewmodel.HealthWarning, "streaming, but WAL replay is paused"
+		f.Health, f.Text = viewmodel.HealthWarning, "a WAL receiver is running, but WAL replay is paused"
 	default:
-		f.Health, f.Text = viewmodel.HealthOK, "streaming from the primary"
+		// isWalReceiverActive counts pg_stat_wal_receiver rows in any state
+		// (probes.go v1.30.1:563-579): running, not proof of streaming.
+		f.Health, f.Text = viewmodel.HealthOK, "a WAL receiver is running"
 	}
 	return f
 }

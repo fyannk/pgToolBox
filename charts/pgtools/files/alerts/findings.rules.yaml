@@ -76,6 +76,6 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "The diagnostics of the Cluster {{ $labels.cluster_namespace }}/{{ $labels.cluster }} on {{ $labels.pod }} are over an hour old"
+          summary: "The diagnostics of the Cluster {{ $labels.cluster_namespace }}/{{ $labels.cluster }} on {{ $labels.instance }} are over an hour old"
           description: "No diagnostics run for an hour (the safety cadence, DIAGNOSTICS_INTERVAL, is at most 30 minutes): the findings this replica exports and shows describe the past."
           runbook_url: "https://github.com/fyannk/pgToolBox/blob/main/docs/site/docs/console/alerts.md#pgtoolboxfindingrunsstale"

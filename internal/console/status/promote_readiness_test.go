@@ -17,6 +17,7 @@ package status
 import (
 	"context"
 	"maps"
+	"strings"
 	"testing"
 	"time"
 
@@ -94,6 +95,7 @@ func TestPromoteReadinessNeverOkUnread(t *testing.T) {
 		sweptAt time.Time
 		ann     map[string]string
 		states  map[string]viewmodel.SourceState
+		unread  bool // the Pods were not listed
 		row     viewmodel.InstanceRow
 		want    []want
 	}{
@@ -183,6 +185,20 @@ func TestPromoteReadinessNeverOkUnread(t *testing.T) {
 			want:  []want{{viewmodel.ReadinessPod, viewmodel.HealthCritical}, {viewmodel.ReadinessFencing, viewmodel.HealthCritical}},
 		},
 		{
+			name:   "Pods not listed: no Pod is seen, none was read",
+			swept:  map[string]sweep.Instance{"db-1": primaryOK},
+			unread: true,
+			row:    viewmodel.InstanceRow{Name: "db-2", StatusRead: viewmodel.StatusRead{State: viewmodel.StatusReadPending, Reason: podsNotRead}},
+			want:   []want{{viewmodel.ReadinessPod, viewmodel.HealthUnknown}},
+		},
+		{
+			name:   "no Pod in a stale cache",
+			swept:  map[string]sweep.Instance{"db-1": primaryOK},
+			states: map[string]viewmodel.SourceState{cache.SourcePods: {Source: cache.SourcePods, State: viewmodel.SourceStale, Reason: "pod watch lost"}},
+			row:    viewmodel.InstanceRow{Name: "db-2", StatusRead: viewmodel.StatusRead{State: viewmodel.StatusReadNotRunning}},
+			want:   []want{{viewmodel.ReadinessPod, viewmodel.HealthUnknown}},
+		},
+		{
 			// A broken watch keeps the last Pod and Cluster in the cache:
 			// what they say is not a current reading.
 			name:   "Pod and Cluster watches stale",
@@ -213,12 +229,16 @@ func TestPromoteReadinessNeverOkUnread(t *testing.T) {
 			svc := New(Options{Cache: fc, Now: func() time.Time { return now }})
 			g := &gathered{
 				key: cache.ClusterKey{Namespace: "team-a", Name: "db"}, cluster: cluster(tt.ann), hasSweep: true,
-				swept: sweep.Snapshot{SweptAt: at, Interval: 30 * time.Second, Instances: tt.swept},
+				readable: map[string]bool{cache.SourcePods: !tt.unread},
+				swept:    sweep.Snapshot{SweptAt: at, Interval: 30 * time.Second, Instances: tt.swept},
 			}
 			facts := svc.promoteReadiness(g, tt.row, now)
 			byKey := map[viewmodel.ReadinessKey]viewmodel.ReadinessFact{}
 			for _, f := range facts {
 				byKey[f.Key] = f
+				if strings.Contains(f.Text, "streaming from the primary") {
+					t.Errorf("%s: %q claims streaming from a WAL receiver count", f.Key, f.Text)
+				}
 				if f.Text == "" || f.Provenance.Source == "" {
 					t.Errorf("%s: no text or source: %+v", f.Key, f)
 				}

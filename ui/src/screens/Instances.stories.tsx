@@ -3,6 +3,7 @@ import { expect, userEvent, within } from "storybook/test";
 import { instances } from "../../mocks/fixtures";
 import { handlersFor } from "../../mocks/handlers";
 import type { InstanceRow } from "../api/generated/model";
+import { m } from "../paraglide/messages.js";
 import { compact, dark, darkCompact, french } from "../testing/variants";
 import { InstancesScreen, InstancesView } from "./Instances";
 
@@ -65,6 +66,26 @@ export const ReadyWalFilesNotReportedFrench: Story = french({
     await expect(ready).toHaveTextContent("non communiqué");
   },
 });
+/** Pods not read: the row says so instead of "no pod". */
+export const PodsNotRead: Story = {
+  args: {
+    data: {
+      ...instances,
+      items: (instances.items ?? []).map((r) => ({
+        ...r,
+        health: "unknown",
+        pod: undefined,
+        live: undefined,
+        statusRead: { state: "pending", reason: "Pods could not be read" },
+      })),
+    },
+  },
+  play: async ({ canvas }) => {
+    await expect(canvas.getAllByText("Pods could not be read").length).toBeGreaterThanOrEqual(3);
+    await expect(canvas.queryByText(m.pod_absent())).toBeNull();
+  },
+};
+
 /**
  * No CA bundle configured: every instance is "not verifiable", an honest
  * configuration state with the administrator's fix, not an error.

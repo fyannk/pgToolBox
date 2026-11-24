@@ -239,7 +239,7 @@ func (r *Reconciler) bindings(ctx context.Context, access *pgtoolboxv1alpha1.PgA
 // on its UID so a binding recreated under the same name in between is not
 // the one deleted.
 // It reports whether this call deleted it: false, with no error, when the
-// binding was already gone (a cache that still lists it), so that the
+// binding was already gone or recreated (a cache that still lists it), so the
 // caller records the deletion once, not once per loop.
 func (r *Reconciler) deleteBinding(ctx context.Context, access *pgtoolboxv1alpha1.PgAccessRequest, binding rbacv1.RoleBinding) (bool, error) {
 	uid := binding.UID
@@ -253,12 +253,14 @@ func (r *Reconciler) deleteBinding(ctx context.Context, access *pgtoolboxv1alpha
 	}
 	if r.APIReader != nil {
 		// The API server may have applied the delete and still answered an
-		// error: what the binding is now settles it.
+		// error, and a conflict is not always the UID's: what the binding is
+		// now settles it.
 		var live rbacv1.RoleBinding
 		readErr := r.APIReader.Get(ctx, client.ObjectKey{Namespace: access.Namespace, Name: binding.Name}, &live)
 		if apierrors.IsNotFound(readErr) || (readErr == nil && live.UID != uid) {
-			// Most likely this delete, answered with an error.
-			return true, nil
+			// Most likely this delete, answered with an error; a conflict
+			// answers that nothing was deleted.
+			return !apierrors.IsConflict(err), nil
 		}
 	}
 	return false, fmt.Errorf("delete RoleBinding %s: %w", binding.Name, err)

@@ -453,7 +453,7 @@
   "ops_readiness_pod": "Pod",
   "ops_readiness_refused": "CloudNativePG refuserait :",
   "ops_readiness_replay_lag": "Retard de rejeu",
-  "ops_readiness_streaming": "Réplication en flux",
+  "ops_readiness_streaming": "Récepteur WAL",
   "ops_readiness_sync_state": "État synchrone",
   "ops_readiness_title": "Préparation de {instance}",
   "ops_recent": "Opérations récentes",

@@ -45,6 +45,8 @@ import (
 	"strconv"
 	"strings"
 
+	"k8s.io/apimachinery/pkg/api/resource"
+
 	"github.com/fyannk/pgToolBox/pkg/cnpgstatus"
 )
 
@@ -87,7 +89,8 @@ const (
 	// instance stops, pg_upgrade runs, and the replicas are cloned again.
 	EffectMajorUpgrade Effect = "majorUpgrade"
 	// EffectRefused is a value the operator's admission webhook refuses
-	// (a parameter it fixes or blocks): the spec cannot carry it.
+	// (a parameter it fixes or blocks, a smaller or removed volume): the
+	// spec cannot carry it.
 	EffectRefused Effect = "refused"
 	// EffectUnknown is a change this package cannot classify, or a
 	// parameter the Cluster's PostgreSQL major does not have (context
@@ -592,7 +595,6 @@ var specRules = map[string]FieldChange{
 	// A replica-cluster switch (promotion, demotion, a new source) runs
 	// its own procedure; this package does not predict it.
 	"replica": {Effect: EffectUnknown, Reason: ReasonReplicaRole},
-	"storage": {Effect: EffectNone, Reason: ReasonVolumeResize},
 }
 
 // postgresqlRules classifies the spec.postgresql sub-fields other than
@@ -620,7 +622,7 @@ func (p *Preview) fields(before, after *cluster) {
 		case "postgresql":
 			p.postgresql(before.Spec[key], after.Spec[key])
 			continue
-		case "walStorage", "tablespaces":
+		case "storage", "walStorage", "tablespaces":
 			p.volumes(key, before.Spec[key], after.Spec[key])
 			continue
 		case "imageName", "imageCatalogRef":
@@ -655,34 +657,132 @@ func (p *Preview) postgresql(before, after json.RawMessage) {
 
 // volumes: a new WAL volume or tablespace attaches a PVC, which rolls the
 // Pods ("pod has missing PVCs"); a size change of an existing one is a
-// PVC expansion.
+// PVC expansion, and a smaller or removed one is refused.
 func (p *Preview) volumes(key string, before, after json.RawMessage) {
-	added := false
+	added, refused, unknown := false, false, false
+	check := func(before, after json.RawMessage) {
+		effect := storageEffect(before, after)
+		refused = refused || effect == EffectRefused
+		unknown = unknown || effect == EffectUnknown
+	}
 	switch key {
+	case "storage":
+		check(before, after)
 	case "walStorage":
-		added = len(before) == 0 || string(before) == "null"
+		added = absent(before)
+		// validateWalStorageChange: "cannot be disabled once configured".
+		if refused = absent(after); !refused {
+			check(before, after)
+		}
 	case "tablespaces":
 		var b, a []struct {
-			Name string `json:"name"`
+			Name    string          `json:"name"`
+			Storage json.RawMessage `json:"storage"`
 		}
 		_ = json.Unmarshal(before, &b)
 		_ = json.Unmarshal(after, &a)
-		known := map[string]bool{}
+		old, kept := map[string]json.RawMessage{}, map[string]bool{}
 		for _, t := range b {
-			known[t.Name] = true
+			old[t.Name] = t.Storage
 		}
 		for _, t := range a {
-			if !known[t.Name] {
-				added = true
-			}
+			kept[t.Name] = true
+			storage, ok := old[t.Name]
+			added = added || !ok
+			check(storage, t.Storage)
+		}
+		for name := range old {
+			// validateTablespacesChange: none can be deleted once created.
+			refused = refused || !kept[name]
 		}
 	}
 	change := FieldChange{Path: "spec." + key, Effect: EffectNone, Reason: ReasonVolumeResize}
 	if added {
 		change.Effect, change.Reason = EffectRollout, ReasonNewVolume
 	}
+	if unknown {
+		change.Effect, change.Reason = EffectUnknown, ReasonVolumeResize
+	}
+	if refused {
+		change.Effect, change.Reason = EffectRefused, ReasonVolumeResize
+	}
 	p.Fields = append(p.Fields, change)
 }
+
+func absent(raw json.RawMessage) bool { return len(raw) == 0 || string(raw) == "null" }
+
+// storageEffect is EffectRefused when the operator's webhook refuses the
+// StorageConfiguration of a volume, new or changed
+// (internal/webhook/v1/cluster_webhook.go v1.30.1:1712-1737
+// validateStorageConfigurationSize and 1805-1835
+// validateStorageConfigurationChange, the same at v1.30.0 and v1.30.2):
+// a smaller size, a size that does not parse, or no size at all. A size
+// the webhook cannot read before the change is not compared; one this
+// package does not compare is EffectUnknown.
+func storageEffect(before, after json.RawMessage) Effect {
+	var b, a storage
+	if json.Unmarshal(before, &b) != nil && !absent(before) {
+		return EffectNone
+	}
+	if json.Unmarshal(after, &a) != nil && !absent(after) {
+		return EffectNone
+	}
+	newSize, newOK := a.size()
+	oldSize, oldOK := b.size()
+	switch {
+	case !newOK:
+		return EffectUnknown
+	case newSize == nil || (a.Size == "" && newSize.IsZero()):
+		return EffectRefused
+	case !oldOK:
+		return EffectUnknown
+	case oldSize != nil && oldSize.Cmp(*newSize) > 0:
+		return EffectRefused
+	}
+	return EffectNone
+}
+
+// storage is the part of a StorageConfiguration its size comes from.
+type storage struct {
+	Size     string `json:"size"`
+	Template *struct {
+		Resources struct {
+			// Raw: decoding a Quantity parses it, which is unbounded work.
+			Requests map[string]json.RawMessage `json:"requests"`
+		} `json:"resources"`
+	} `json:"pvcTemplate"`
+}
+
+// size is GetSizeOrNil (api/v1/cluster_funcs.go v1.30.1:375-394): the
+// size, else the PVC template's storage request; nil when it cannot be
+// read. It is not ok when parsing the size could be unbounded work.
+func (s storage) size() (q *resource.Quantity, ok bool) {
+	text := s.Size
+	if text == "" {
+		if s.Template == nil {
+			return nil, true
+		}
+		raw := s.Template.Resources.Requests["storage"]
+		if absent(raw) {
+			return &resource.Quantity{}, true
+		}
+		if json.Unmarshal(raw, &text) != nil {
+			text = string(raw)
+		}
+	}
+	// A quantity is computed to its full magnitude: a longer exponent is
+	// megabytes of digits.
+	if len(text) > 64 || longExponent.MatchString(text) {
+		return nil, false
+	}
+	parsed, err := resource.ParseQuantity(text)
+	if err != nil {
+		return nil, true
+	}
+	return &parsed, true
+}
+
+var longExponent = regexp.MustCompile(`[eE][+-]?[0-9]{4,}$`)
 
 // image is a rolling update, or a major upgrade when the major moves.
 func (p *Preview) image(key string, before, after *cluster) {

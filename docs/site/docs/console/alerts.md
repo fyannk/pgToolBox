@@ -235,5 +235,5 @@ version.
 
 Severity `warning`. One replica has not run the diagnostics of a Cluster for an
 hour (the safety cadence, `DIAGNOSTICS_INTERVAL`, is at most 30 minutes). The
-alert names the Pod: what it exports and shows is the past. Restart it, and
+alert names its scrape target (`instance`): what it exports and shows is the past. Restart it, and
 look at its log for a stuck runner (`pgtoolbox_console_runner_restarts_total`).

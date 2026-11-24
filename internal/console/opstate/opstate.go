@@ -43,7 +43,10 @@ type InstanceState struct {
 type ClusterState struct {
 	Cluster *cnpgv1.Cluster
 	Pods    []corev1.Pod
-	Backups []*cnpgv1.Backup
+	// PodsListed reports that Pods was read, so a missing Pod is not taken
+	// for an instance that has none.
+	PodsListed bool
+	Backups    []*cnpgv1.Backup
 	// BackupsListed reports that Backups was read: false when the console
 	// cannot read Backups in the namespace or the read failed, so an
 	// empty Backups is not taken for "none".

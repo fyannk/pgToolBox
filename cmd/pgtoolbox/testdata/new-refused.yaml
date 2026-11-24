@@ -12,6 +12,8 @@ metadata:
 spec:
   instances: 3
   imageName: ghcr.io/cloudnative-pg/postgresql:17.6
+  storage:
+    size: not-a-size
   postgresql:
     parameters:
       max_connections: "100"

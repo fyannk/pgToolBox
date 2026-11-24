@@ -326,7 +326,7 @@ func compare(before, after map[key][]byte, in preview.Input) (report, error) {
 }
 
 // disruptive reports whether a preview restarts, rolls out, shuts down,
-// upgrades, cannot be classified, or carries a refused parameter.
+// upgrades, cannot be classified, or carries a refused change.
 func disruptive(p preview.Preview) bool {
 	switch p.Effect {
 	case preview.EffectNone, preview.EffectReload, preview.EffectStart:
@@ -340,6 +340,11 @@ func refused(p preview.Preview) int {
 	n := 0
 	for _, c := range p.Parameters {
 		if c.Effect == preview.EffectRefused {
+			n++
+		}
+	}
+	for _, f := range p.Fields {
+		if f.Effect == preview.EffectRefused {
 			n++
 		}
 	}

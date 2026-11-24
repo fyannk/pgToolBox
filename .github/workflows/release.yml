@@ -564,6 +564,8 @@ jobs:
     needs: [prepare, publish, scan]
     runs-on: ubuntu-latest
     timeout-minutes: 55 # includes up to 20 minutes of waiting for package visibility
+    outputs:
+      newest: ${{ steps.newest.outputs.newest }}
     permissions:
       contents: write # create the release and upload its assets
       packages: write # move the latest tag of a stable release
@@ -722,6 +724,8 @@ jobs:
   pages:
     name: Refresh the documentation site
     needs: [prepare, release]
+    # Not for a patch on an older line: it would publish older documentation.
+    if: needs.release.outputs.newest == 'true' || needs.prepare.outputs.prerelease == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

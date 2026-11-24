@@ -359,7 +359,7 @@ func (s *Service) OperationState(ctx context.Context, namespace, name string) (o
 	if err != nil {
 		return opstate.ClusterState{}, err
 	}
-	st := opstate.ClusterState{Cluster: g.cluster.DeepCopy(), Backups: g.backups, BackupsListed: g.listed(cache.SourceBackups), Minor: g.minor}
+	st := opstate.ClusterState{Cluster: g.cluster.DeepCopy(), PodsListed: g.listed(cache.SourcePods), Backups: g.backups, BackupsListed: g.listed(cache.SourceBackups), Minor: g.minor}
 	for _, p := range g.pods {
 		st.Pods = append(st.Pods, *p.DeepCopy())
 	}

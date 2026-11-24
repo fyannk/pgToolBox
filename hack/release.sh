@@ -66,7 +66,8 @@
 #                               build the pgtoolbox CLI (cmd/pgtoolbox) static for
 #                               linux and darwin on amd64 and arm64 into OUT_DIR as
 #                               pgtoolbox-cli_VERSION_OS_ARCH.tar.gz (the binary and
-#                               LICENSE, reproducible: sorted, fixed mtime and owner)
+#                               LICENSE, reproducible: sorted, fixed mtime and owner;
+#                               needs GNU tar, which macOS does not ship)
 #   release.sh sums             write SHA256SUMS over the release files in OUT_DIR
 #   release.sh newest-stable TAG
 #                               print true when TAG is the highest stable vX.Y.Z tag

@@ -19,7 +19,7 @@ export interface InstanceRow {
   live?: LiveStatus;
   /** Instance (pod) name. */
   name: string;
-  /** Absent for an instance the operator reports without a pod. */
+  /** Absent for an instance the operator reports without a pod, or when the Pods were not read (statusRead says which). */
   pod?: PodView;
   role: Roles;
   /** @nullable */

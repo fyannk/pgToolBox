@@ -3939,7 +3939,7 @@ components:
           type: string
         pod:
           $ref: "#/components/schemas/PodView"
-          description: Absent for an instance the operator reports without a pod.
+          description: Absent for an instance the operator reports without a pod, or when the Pods were not read (statusRead says which).
         role:
           $ref: "#/components/schemas/Roles"
         series:
@@ -5412,6 +5412,7 @@ components:
             - rollout
             - shutdown
             - majorUpgrade
+            - refused
             - unknown
           type: string
         path:
@@ -5597,7 +5598,7 @@ components:
         name:
           type: string
         readiness:
-          description: Pod readiness, streaming, replay lag, synchronous state and fencing of the target, each attributed and aged; not a score.
+          description: Pod readiness, WAL receiver, replay lag, synchronous state and fencing of the target, each attributed and aged; not a score.
           items:
             $ref: "#/components/schemas/ReadinessFact"
           type:
@@ -5721,7 +5722,7 @@ components:
         provenance:
           $ref: "#/components/schemas/Provenance"
         text:
-          description: The fact in words, such as streaming from the primary or not read.
+          description: The fact in words, such as a WAL receiver is running or not read.
           type: string
       required:
         - key

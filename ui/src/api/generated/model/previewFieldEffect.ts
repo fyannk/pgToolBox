@@ -17,5 +17,6 @@ export const PreviewFieldEffect = {
   rollout: 'rollout',
   shutdown: 'shutdown',
   majorUpgrade: 'majorUpgrade',
+  refused: 'refused',
   unknown: 'unknown',
 } as const;

@@ -13,6 +13,6 @@ export interface ReadinessFact {
   health: ReadinessFactHealth;
   key: ReadinessFactKey;
   provenance: Provenance;
-  /** The fact in words, such as streaming from the primary or not read. */
+  /** The fact in words, such as a WAL receiver is running or not read. */
   text: string;
 }
