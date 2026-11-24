@@ -63,7 +63,7 @@ checksum of every other attached file) and `SHA256SUMS.sigstore.json` (its keyle
 signature); its notes are the matching `CHANGELOG.md` section followed by a link to the
 commit log (the compare view with the previous release, or the history for the first).
 
-The documentation site (GitHub Pages) is rebuilt from the tag by the release workflow,
+The documentation site (GitHub Pages) is rebuilt from the tag by the release workflow (not for a patch on an older line),
 and from `main` by the nightly and post-security rebuilds: it shows the release's
 documentation until the next of those, then `main`'s.
 
