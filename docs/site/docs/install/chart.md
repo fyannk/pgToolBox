@@ -29,7 +29,7 @@ Install each console as its own release **in the team's namespace**:
 
 ```bash
 helm install console oci://ghcr.io/fyannk/charts/pgtools \
-  --version 0.1.0 --namespace team-a \
+  --version 0.2.0 --namespace team-a \
   --set console.auth.provider=token
 ```
 
@@ -74,7 +74,7 @@ Install it once per Kubernetes cluster:
 
 ```bash
 helm install pgtoolbox oci://ghcr.io/fyannk/charts/pgtoolbox \
-  --version 0.1.0 --namespace pgtoolbox --create-namespace
+  --version 0.2.0 --namespace pgtoolbox --create-namespace
 ```
 
 It renders the operator Deployment (two replicas, leader election), its generated

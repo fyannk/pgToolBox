@@ -21,7 +21,7 @@ resources:
 images:
 - name: pgtoolbox-console
   newName: ghcr.io/fyannk/pgtoolbox-console
-  newTag: 0.1.0
+  newTag: 0.2.0
 
 # The evidence token's audience is pgtoolbox-evidence-agent/<namespace> and its
 # path <namespace>/token: take the namespace from the Deployment, so

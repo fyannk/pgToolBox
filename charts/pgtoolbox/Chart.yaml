@@ -6,8 +6,8 @@ type: application
 # supports 1.34 to 1.36). The pre-release suffix keeps managed distributions
 # (1.34.1-gke.100, v1.34.2+k3s1) in range.
 kubeVersion: ">=1.34.0-0"
-version: 0.1.0
-appVersion: "0.1.0"
+version: 0.2.0
+appVersion: "0.2.0"
 keywords:
   - operator
   - postgresql

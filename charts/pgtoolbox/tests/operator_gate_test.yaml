@@ -59,7 +59,7 @@ tests:
     asserts:
       - contains:
           path: "spec.template.spec.containers[0].args"
-          content: "--default-evidence-agent-image=ghcr.io/fyannk/pgtoolbox-evidence-agent:0.1.0"
+          content: "--default-evidence-agent-image=ghcr.io/fyannk/pgtoolbox-evidence-agent:0.2.0"
       - notExists: {path: "spec.template.spec.containers[0].env[?(@.name=='PGADMIN_IMAGE')]"}
 
   - it: runs, for a PgToolBoxConsole that names no image, the console of the same release
@@ -68,7 +68,7 @@ tests:
     asserts:
       - contains:
           path: "spec.template.spec.containers[0].args"
-          content: "--default-console-image=ghcr.io/fyannk/pgtoolbox-console:0.1.0"
+          content: "--default-console-image=ghcr.io/fyannk/pgtoolbox-console:0.2.0"
 
   - it: pins that console by digest, the digest winning over the tag
     set:

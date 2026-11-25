@@ -10,17 +10,18 @@ schema: olm.channel
 package: pgtoolbox
 name: alpha
 entries:
-- name: pgtoolbox.v0.1.0
+- name: pgtoolbox.v0.2.0
+  replaces: pgtoolbox.v0.1.0
 ---
 schema: olm.bundle
 package: pgtoolbox
-name: pgtoolbox.v0.1.0
-image: ghcr.io/fyannk/pgtoolbox-bundle:0.1.0
+name: pgtoolbox.v0.2.0
+image: ghcr.io/fyannk/pgtoolbox-bundle:0.2.0
 properties:
 - type: olm.package
   value:
     packageName: pgtoolbox
-    version: 0.1.0
+    version: 0.2.0
 - type: olm.gvk
   value:
     group: pgtoolbox.fyannk.dev
