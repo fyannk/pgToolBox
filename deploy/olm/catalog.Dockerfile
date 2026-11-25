@@ -32,6 +32,9 @@ FROM --platform=$BUILDPLATFORM golang:1.27.4@sha256:08bcb99a38f85a265f9a93d1d332
 COPY --from=tools /out/build/opm /bin/opm
 COPY pgtoolbox /configs/pgtoolbox
 RUN ["/bin/opm", "serve", "/configs", "--cache-dir=/tmp/cache", "--cache-only"]
+# opm locks the cache when it starts. OLM runs it as 1001, OpenShift as an
+# arbitrary user in group 0: both must be able to write to it.
+RUN chmod -R g=u /tmp/cache
 
 FROM gcr.io/distroless/static-debian13:nonroot@sha256:8ce6dd87e9823c5b48dcfb2c8604714ccb351ce59607327bcc4957448da279b5
 
@@ -40,6 +43,7 @@ LABEL operators.operatorframework.io.index.configs.v1=/configs
 COPY --from=tools /out/target/opm /bin/opm
 COPY --from=tools /out/target/grpc_health_probe /bin/grpc_health_probe
 COPY pgtoolbox /configs/pgtoolbox
-COPY --from=cache --chown=65532:65532 /tmp/cache /tmp/cache
+COPY --from=cache --chown=1001:0 /tmp/cache /tmp/cache
+USER 1001
 ENTRYPOINT ["/bin/opm"]
 CMD ["serve", "/configs", "--cache-dir=/tmp/cache"]

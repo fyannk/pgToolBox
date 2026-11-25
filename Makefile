@@ -419,6 +419,10 @@ docker-build-all: docker-build docker-build-console docker-build-evidence ## Bui
 bundle-build: ## Build the OLM bundle image.
 	docker build -f deploy/olm/bundle.Dockerfile -t $(BUNDLE_IMG) deploy/olm/bundle
 
+.PHONY: catalog-image
+catalog-image: ## Print the OLM catalog image's name.
+	@echo $(CATALOG_IMG)
+
 .PHONY: catalog-build
 catalog-build: ## Build the OLM catalog index image.
 	docker build -f deploy/olm/catalog.Dockerfile -t $(CATALOG_IMG) deploy/olm/catalog
