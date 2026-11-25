@@ -25,10 +25,7 @@ function visit(manifest) {
   const pkg = JSON.parse(readFileSync(manifest, "utf8"));
   const from = dirname(manifest);
   const required = Object.keys(pkg.dependencies ?? {});
-  const optional = [
-    ...Object.keys(pkg.optionalDependencies ?? {}),
-    ...Object.keys(pkg.peerDependencies ?? {}),
-  ];
+  const optional = [...Object.keys(pkg.optionalDependencies ?? {}), ...Object.keys(pkg.peerDependencies ?? {})];
   for (const name of new Set([...required, ...optional])) {
     const found = locate(name, from);
     if (!found) {
@@ -50,4 +47,3 @@ function visit(manifest) {
 
 visit(join(process.cwd(), "package.json"));
 if (seen.size === 0) throw new Error("no dependency found");
-console.log(`${seen.size} packages`);
