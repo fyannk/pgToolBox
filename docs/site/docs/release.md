@@ -128,7 +128,8 @@ in the Rekor transparency log. There is no key to obtain or trust. Each artifact
 also carries a GitHub **build-provenance attestation** (SLSA, signed by GitHub and
 stored next to the image in the registry), and each image carries BuildKit's SBOM
 and `mode=max` provenance, which describe the build and are trustworthy once you
-have verified the image digest they are attached to.
+have verified the image digest they are attached to. The console's SBOM also lists
+the npm packages of the web interface embedded in its binary.
 
 ```bash
 # cosign v3.1 or newer (the workflow signs with v3.1.4; v2 is not supported):

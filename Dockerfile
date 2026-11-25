@@ -42,7 +42,7 @@ COPY ui/package.json ui/pnpm-lock.yaml ui/pnpm-workspace.yaml ./
 COPY ui/tokens/package.json tokens/package.json
 RUN for i in 1 2 3 4 5; do pnpm install --frozen-lockfile && exit 0; echo "pnpm install failed (attempt $i/5)" >&2; sleep $((i * 10)); done; exit 1
 COPY ui/ ./
-RUN pnpm i18n && pnpm build
+RUN pnpm i18n && pnpm build && node scripts/npm-sbom.mjs /sbom/npm
 
 # The documentation of the console's own version, embedded in the console
 # binary for the MCP docs tools. It is generated, not
@@ -159,6 +159,9 @@ COPY LICENSE /licenses/console/LICENSE
 # library they bundle (MIT, which asks for its text to travel with copies)
 # comes from the exact npm package the build used.
 COPY --from=ui /ui/node_modules/uplot/LICENSE /licenses/console/uplot/LICENSE
+# The npm packages in that embedded SPA, where the SBOM generator and image
+# scanners look (ui/scripts/npm-sbom.mjs).
+COPY --from=ui /sbom/npm /usr/share/sbom/npm
 USER 65532:65532
 EXPOSE 3000
 ENTRYPOINT ["/console"]

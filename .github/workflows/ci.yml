@@ -607,6 +607,21 @@ jobs:
         run: |
           set -euo pipefail
           make bundle-build catalog-build
+      # OLM runs the catalog as 1001 and OpenShift as an arbitrary user in
+      # group 0; opm must be able to lock its cache as either.
+      - name: The catalog serves as OLM's and OpenShift's users
+        run: |
+          set -euo pipefail
+          for user in 1001 1001:1001 1000740000:0; do
+            id="$(docker run -d --user "${user}" "$(make -s catalog-image)")"
+            ok=""
+            for _ in $(seq 30); do
+              if docker exec "${id}" /bin/grpc_health_probe -addr=localhost:50051 2>/dev/null; then ok=1; break; fi
+              sleep 1
+            done
+            [[ -n "${ok}" ]] || { echo "::error::the catalog does not serve as ${user}"; docker logs "${id}"; exit 1; }
+            docker rm -f "${id}" >/dev/null
+          done
 
   evidence-integration:
     name: Evidence fixtures and provider parity (Docker)
