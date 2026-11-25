@@ -9,6 +9,8 @@ the notes before upgrading.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-25
+
 ### Added
 
 - **The `pgtoolbox` command-line tool** (`pgtoolbox preview`, the offline change
@@ -16,6 +18,14 @@ the notes before upgrading.
   binaries for `amd64` and `arm64` as `pgtoolbox-cli_<version>_<os>_<arch>.tar.gz`
   on the release page (listed in the signed `SHA256SUMS`, attested), and at
   `/pgtoolbox` in the console image.
+- **Findings as metrics**: the console exports its diagnostics findings as
+  `pgtoolbox_finding`, and the `pgtools` chart can ship the alerts on them as a
+  PrometheusRule, labelled like CloudNativePG's.
+- **An incident summary** of a Cluster as Markdown, with "Copy as Markdown" on its
+  overview.
+- **Promote readiness**: the promote dialog shows each target's Pod readiness,
+  streaming state, lag, synchronous state and fencing, unknown where the console
+  did not read it.
 
 ### Changed
 
@@ -25,6 +35,48 @@ the notes before upgrading.
   its Pod read it. An install or upgrade whose servers name neither is refused with
   the commands that make a ConfigMap holding only `ca.crt`; a `caSecret` you name
   works as before ([#114](https://github.com/fyannk/pgToolBox/issues/114)).
+- **The operator runs MCP in its own one-replica Deployment**, `<console>-mcp`, as the
+  team chart does. It no longer labels the Lease holder's Pod, and loses the
+  cluster-wide `patch` on Pods and `list`/`watch` on Leases that needed.
+- **On OpenShift, pgAdmin runs the cluster's own oauth-proxy image** (the
+  `openshift/oauth-proxy` ImageStream) when no image is named
+  ([#100](https://github.com/fyannk/pgToolBox/pull/100)).
+- **Recent operations are rebuilt from the Cluster's objects** (Backups, restarts,
+  reloads, restore drills and the primary changes observed) instead of one replica's
+  memory.
+- pgBackRest manifests the listing shows unchanged are reused between refreshes.
+
+### Removed
+
+- **The evidence agent's standalone viewer.** The agent is its only runtime: an empty
+  `RUNTIME_MODE` selects it and any other value is refused.
+
+### Fixed
+
+- **The OLM catalog serves under any user.** The 0.1.0 catalog image crashed when
+  it did not run as its own default user.
+- The live streams send a heartbeat the browser can see, reopen with backoff, and
+  return to live after a watch error.
+- Instance rows, WAL receivers and absent Pods the console could not read are shown
+  as unknown or stale, never as absent or healthy.
+- Evidence: xz history files are decoded block by block and checked as liblzma does;
+  an object read may take time in proportion to its size limit.
+- A patch on an older release line moves neither `latest` nor the Latest badge, and
+  does not republish the documentation site.
+
+### Security
+
+- pgAdmin's ServiceAccount never reads a Cluster's CA Secret: the operator copies only
+  the parsed certificates of `ca.crt` into the offer.
+- A `PgAccessRequest` ignores the `reconcile=skip` pause, and its grant is revoked as
+  soon as it is deleted, even if a finalizer keeps the object.
+- A full sign-in rate limiter evicts its oldest bucket and never resets the throttled
+  ones ([#111](https://github.com/fyannk/pgToolBox/issues/111)).
+- Redaction catches SQL passwords given as escape or Unicode strings, and SQL, libpq
+  and URL passwords in payload text.
+- The evidence agent refuses an xz history that declares a dictionary above 8 MiB, which
+  could make it allocate up to 4 GiB.
+- The console image's SBOM lists the npm packages of the embedded web interface.
 
 ## [0.1.0] - 2026-11-14
 
@@ -363,4 +415,6 @@ addresses.
   Release candidates (`v0.1.0-rc.1`) no longer carry a `v` in the image, chart and notes version: one resolver, `release.sh resolve`, feeds the workflow and every script, and the dry run rehearses it.
   The console embeds its documentation as one deterministic gzip archive (`data/bundle.gz`), budgeted at 1 MiB compressed and 4 MiB decompressed; the generator names the limit a site build breaks.
 
+[Unreleased]: https://github.com/fyannk/pgToolBox/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/fyannk/pgToolBox/releases/tag/v0.2.0
 [0.1.0]: https://github.com/fyannk/pgToolBox/releases/tag/v0.1.0

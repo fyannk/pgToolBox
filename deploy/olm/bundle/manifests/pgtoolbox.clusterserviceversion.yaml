@@ -1,13 +1,13 @@
 apiVersion: operators.coreos.com/v1alpha1
 kind: ClusterServiceVersion
 metadata:
-  name: pgtoolbox.v0.1.0
+  name: pgtoolbox.v0.2.0
   namespace: placeholder
   annotations:
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
     capabilities: Basic Install
     categories: Database
-    containerImage: ghcr.io/fyannk/pgtoolbox-operator:0.1.0
+    containerImage: ghcr.io/fyannk/pgtoolbox-operator:0.2.0
     createdAt: "2026-11-07T00:00:00Z"
     operatorframework.io/suggested-namespace: pgtoolbox
     operatorframework.io/suggested-namespace-template: '{"kind":"Namespace","apiVersion":"v1","metadata":{"name":"pgtoolbox","labels":{"pod-security.kubernetes.io/enforce":"restricted","pod-security.kubernetes.io/audit":"restricted","pod-security.kubernetes.io/warn":"restricted"}}}'
@@ -117,7 +117,8 @@ spec:
   - oidc
   - openshift
   - evidence
-  version: 0.1.0
+  version: 0.2.0
+  replaces: pgtoolbox.v0.1.0
   maturity: alpha
   minKubeVersion: 1.34.0
   icon:
@@ -576,14 +577,14 @@ spec:
                   type: RuntimeDefault
               containers:
               - name: manager
-                image: ghcr.io/fyannk/pgtoolbox-operator:0.1.0
+                image: ghcr.io/fyannk/pgtoolbox-operator:0.2.0
                 args:
                 - --leader-elect
                 - --metrics-bind-address=:8080
                 - --health-probe-bind-address=:8081
-                - --operator-image=ghcr.io/fyannk/pgtoolbox-operator:0.1.0
-                - --default-evidence-agent-image=ghcr.io/fyannk/pgtoolbox-evidence-agent:0.1.0
-                - --default-console-image=ghcr.io/fyannk/pgtoolbox-console:0.1.0
+                - --operator-image=ghcr.io/fyannk/pgtoolbox-operator:0.2.0
+                - --default-evidence-agent-image=ghcr.io/fyannk/pgtoolbox-evidence-agent:0.2.0
+                - --default-console-image=ghcr.io/fyannk/pgtoolbox-console:0.2.0
                 # The webhook of webhookdefinitions: the bundle cannot ship the
                 # chart's ValidatingAdmissionPolicies.
                 - --admission-webhook
@@ -670,12 +671,12 @@ spec:
       resources: [clusters]
   relatedImages:
   - name: manager
-    image: ghcr.io/fyannk/pgtoolbox-operator:0.1.0
+    image: ghcr.io/fyannk/pgtoolbox-operator:0.2.0
   - name: pgadmin
     image: ghcr.io/fyannk/pgadmin:9.18-hardened@sha256:96576df8aba0d0057248644d6d5ad398869e42bcf3fcfba2c0f7c13d151ea17c
   - name: oauth-proxy
     image: quay.io/openshift/origin-oauth-proxy:4.18@sha256:63b0344b903162519efdb63052c1dde81aa17cfc46ba63cc87300db47f0fb5df
   - name: evidence-agent
-    image: ghcr.io/fyannk/pgtoolbox-evidence-agent:0.1.0
+    image: ghcr.io/fyannk/pgtoolbox-evidence-agent:0.2.0
   - name: console
-    image: ghcr.io/fyannk/pgtoolbox-console:0.1.0
+    image: ghcr.io/fyannk/pgtoolbox-console:0.2.0

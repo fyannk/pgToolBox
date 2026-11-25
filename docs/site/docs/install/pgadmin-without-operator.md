@@ -21,7 +21,7 @@ before it uses it.
 kubectl -n team-a create secret generic pgadmin-oidc --from-literal=client-secret=...
 
 helm upgrade --install console oci://ghcr.io/fyannk/charts/pgtools \
-  --version 0.1.0 --namespace team-a -f pgadmin.yaml
+  --version 0.2.0 --namespace team-a -f pgadmin.yaml
 ```
 
 ```yaml title="pgadmin.yaml"

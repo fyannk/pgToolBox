@@ -78,7 +78,7 @@ tests:
           path: spec.template.spec.containers[0].securityContext
           value: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: {drop: [ALL]}}
       - equal: {path: spec.template.spec.serviceAccountName, value: pgc-evidence-orders}
-      - equal: {path: 'spec.template.spec.containers[0].image', value: "ghcr.io/fyannk/pgtoolbox-evidence-agent:0.1.0"}
+      - equal: {path: 'spec.template.spec.containers[0].image', value: "ghcr.io/fyannk/pgtoolbox-evidence-agent:0.2.0"}
       - contains:
           path: spec.template.spec.volumes[1].projected.sources
           content: {serviceAccountToken: {path: token, expirationSeconds: 3600}}
